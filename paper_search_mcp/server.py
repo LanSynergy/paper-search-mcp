@@ -32,9 +32,8 @@ from .academic_platforms.ssrn import SSRNSearcher
 from .utils import extract_doi
 
 from .paper import Paper
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.fastmcp.server import Middleware, MiddlewareContext
-from mcp.server.fastmcp.dependencies import get_http_headers
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 # Initialize MCP server
 mcp = FastMCP("paper_search_server")
@@ -102,39 +101,23 @@ ALL_SOURCES = [
     "unpaywall",
 ]
 
-# ---------------------------------------------------------------------------
-# Authentication Middleware
-# ---------------------------------------------------------------------------
-class ApiKeyAuth(Middleware):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-
-    async def on_call_tool(self, context: MiddlewareContext, call_next):
-        # We only enforce auth if api_key is set
-        if not self.api_key:
-            return await call_next(context)
-
-        headers = get_http_headers() or {}
-        auth_header = headers.get("authorization") or headers.get("Authorization") or ""
-        
-        # Expecting "Bearer <key>"
-        token = ""
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip()
-        
-        if token != self.api_key:
-            logger.warning("Unauthorized access attempt with invalid or missing token.")
-            raise ToolError("Unauthorized: Invalid or missing API key in Authorization header.")
-
-        return await call_next(context)
-
 # Register authentication middleware if MCP_API_KEY is configured
 _mcp_api_key = get_env("API_KEY", "").strip()
-if _mcp_api_key:
-    mcp.add_middleware(ApiKeyAuth(_mcp_api_key))
-    logger.info("Authentication enabled (MCP_API_KEY is set).")
-else:
-    logger.info("Authentication disabled (MCP_API_KEY is not set).")
+
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if not _mcp_api_key:
+            return await call_next(request)
+            
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return Response("Unauthorized: Missing or invalid Authorization header", status_code=401)
+            
+        token = auth_header[7:].strip()
+        if token != _mcp_api_key:
+            return Response("Unauthorized: Invalid API key", status_code=401)
+            
+        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -1413,15 +1396,23 @@ if acm_searcher is not None:
 
 def main():
     transport_name = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+    
     if transport_name in ("http", "streamable-http", "sse"):
         host = os.environ.get("MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("MCP_PORT", "8000"))
         
-        # Use run_http_async or similar if available, but since .run() signature
-        # is (self, transport, show_banner, **transport_kwargs), we should pass 
-        # transport and then host/port as kwargs.
+        # In this version of FastMCP, we must set host/port in the constructor 
+        # settings because .run() doesn't accept them.
+        mcp.settings.host = host
+        mcp.settings.port = port
+        
+        # Add security middleware to the underlying Starlette app
+        if _mcp_api_key:
+            mcp.add_middleware(ApiKeyMiddleware)
+            logger.info("Authentication enabled (MCP_API_KEY is set).")
+        
         logger.info(f"Starting MCP server on {host}:{port} with {transport_name} transport...")
-        mcp.run(transport=transport_name, host=host, port=port)
+        mcp.run(transport=transport_name)
     else:
         mcp.run(transport="stdio")
 
