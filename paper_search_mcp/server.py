@@ -1407,10 +1407,16 @@ def main():
         # Map 'http' to the specific string 'streamable-http' required by FastMCP
         actual_transport = "streamable-http" if transport_name == "http" else transport_name
         
-        # Add security middleware to the underlying Starlette app
+        # In this version of FastMCP, add_middleware is missing. 
+        # We must hook into the app creation to add our security layer.
         if _mcp_api_key:
-            mcp.add_middleware(ApiKeyMiddleware)
-            logger.info("Authentication enabled (MCP_API_KEY is set).")
+            original_app_method = mcp.streamable_http_app
+            def patched_app_method():
+                app = original_app_method()
+                app.add_middleware(ApiKeyMiddleware)
+                return app
+            mcp.streamable_http_app = patched_app_method
+            logger.info("Authentication enabled (patched into Starlette app).")
         
         logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port} with {actual_transport} transport...")
         mcp.run(transport=actual_transport)
