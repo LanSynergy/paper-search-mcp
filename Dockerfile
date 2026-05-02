@@ -15,7 +15,12 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin/paper-search-mcp /usr/local/bin/paper-search-mcp
 
-# Environment variables (override at runtime with -e)
+# Transport config — set MCP_TRANSPORT=http for network/Dokploy deployments
+ENV MCP_TRANSPORT="http"
+ENV MCP_HOST="0.0.0.0"
+ENV MCP_PORT="8000"
+
+# Optional API keys — override at runtime via Dokploy environment variables
 ENV PAPER_SEARCH_MCP_UNPAYWALL_EMAIL=""
 ENV PAPER_SEARCH_MCP_CORE_API_KEY=""
 ENV PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY=""
@@ -25,5 +30,6 @@ ENV PAPER_SEARCH_MCP_GOOGLE_SCHOLAR_PROXY_URL=""
 ENV PAPER_SEARCH_MCP_IEEE_API_KEY=""
 ENV PAPER_SEARCH_MCP_ACM_API_KEY=""
 
-# Use the entry point script
+EXPOSE 8000
+
 CMD ["paper-search-mcp"]
