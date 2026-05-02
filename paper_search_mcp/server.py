@@ -1398,6 +1398,9 @@ def main():
     transport_name = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
     
     if transport_name in ("http", "streamable-http", "sse"):
+        # Map 'http' to the specific string 'streamable-http' required by FastMCP
+        actual_transport = "streamable-http" if transport_name == "http" else transport_name
+        
         host = os.environ.get("MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("MCP_PORT", "8000"))
         
@@ -1411,8 +1414,8 @@ def main():
             mcp.add_middleware(ApiKeyMiddleware)
             logger.info("Authentication enabled (MCP_API_KEY is set).")
         
-        logger.info(f"Starting MCP server on {host}:{port} with {transport_name} transport...")
-        mcp.run(transport=transport_name)
+        logger.info(f"Starting MCP server on {host}:{port} with {actual_transport} transport...")
+        mcp.run(transport=actual_transport)
     else:
         mcp.run(transport="stdio")
 
