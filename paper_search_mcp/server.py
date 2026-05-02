@@ -36,7 +36,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 # Initialize MCP server
-mcp = FastMCP("paper_search_server")
+# Note: We set host/port here or in main() via settings. 
+# For Docker/Dokploy, host must be 0.0.0.0
+mcp = FastMCP(
+    "paper_search_server",
+    host=os.environ.get("MCP_HOST", "0.0.0.0"),
+    port=int(os.environ.get("MCP_PORT", "8000"))
+)
 logger = logging.getLogger(__name__)
 
 # Instances of searchers
@@ -1401,20 +1407,12 @@ def main():
         # Map 'http' to the specific string 'streamable-http' required by FastMCP
         actual_transport = "streamable-http" if transport_name == "http" else transport_name
         
-        host = os.environ.get("MCP_HOST", "0.0.0.0")
-        port = int(os.environ.get("MCP_PORT", "8000"))
-        
-        # In this version of FastMCP, we must set host/port in the constructor 
-        # settings because .run() doesn't accept them.
-        mcp.settings.host = host
-        mcp.settings.port = port
-        
         # Add security middleware to the underlying Starlette app
         if _mcp_api_key:
             mcp.add_middleware(ApiKeyMiddleware)
             logger.info("Authentication enabled (MCP_API_KEY is set).")
         
-        logger.info(f"Starting MCP server on {host}:{port} with {actual_transport} transport...")
+        logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port} with {actual_transport} transport...")
         mcp.run(transport=actual_transport)
     else:
         mcp.run(transport="stdio")
