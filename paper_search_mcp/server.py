@@ -6,6 +6,7 @@ import logging
 import re
 import httpx
 import time
+import threading
 from starlette.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
 from .config import get_env
@@ -57,7 +58,7 @@ def get_public_url(local_path: str) -> str:
     base_url = os.environ.get("PAPER_SEARCH_BASE_URL", "https://papersearch.firat.africa").rstrip("/")
     return f"{base_url}/downloads/{filename}"
 
-async def cleanup_downloads(interval: int = 3600, max_age: int = 3600):
+def cleanup_downloads(interval: int = 3600, max_age: int = 3600):
     """Periodically removes old files from the downloads directory (default 1 hour)."""
     downloads_dir = "./downloads"
     while True:
@@ -74,7 +75,7 @@ async def cleanup_downloads(interval: int = 3600, max_age: int = 3600):
                             logger.info(f"Cleaned up old file: {f}")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-        await asyncio.sleep(interval)
+        time.sleep(interval)
 
 # Instances of searchers
 arxiv_searcher = ArxivSearcher()
@@ -1462,8 +1463,9 @@ def main():
         mcp.streamable_http_app = patched_app_method
         
         # Start cleanup task in the background
-        asyncio.create_task(cleanup_downloads())
-        logger.info("Background cleanup task for downloads started.")
+        cleanup_thread = threading.Thread(target=cleanup_downloads, daemon=True)
+        cleanup_thread.start()
+        logger.info("Background cleanup thread for downloads started.")
         
         logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port} with {actual_transport} transport...")
         mcp.run(transport=actual_transport)
