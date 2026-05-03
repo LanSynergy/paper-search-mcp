@@ -5,6 +5,8 @@ import os
 import logging
 import re
 import httpx
+import time
+from starlette.staticfiles import StaticFiles
 from mcp.server.fastmcp import FastMCP
 from .config import get_env
 from .academic_platforms.arxiv import ArxivSearcher
@@ -44,6 +46,35 @@ mcp = FastMCP(
     port=int(os.environ.get("MCP_PORT", "8000"))
 )
 logger = logging.getLogger(__name__)
+
+def get_public_url(local_path: str) -> str:
+    """Converts a local file path in ./downloads to a public URL if applicable."""
+    if not local_path or not os.path.isfile(local_path):
+        return local_path
+    
+    filename = os.path.basename(local_path)
+    # Default to the known public URL if set, otherwise try to guess
+    base_url = os.environ.get("PAPER_SEARCH_BASE_URL", "https://papersearch.firat.africa").rstrip("/")
+    return f"{base_url}/downloads/{filename}"
+
+async def cleanup_downloads(interval: int = 3600, max_age: int = 3600):
+    """Periodically removes old files from the downloads directory (default 1 hour)."""
+    downloads_dir = "./downloads"
+    while True:
+        try:
+            if os.path.exists(downloads_dir):
+                now = time.time()
+                for f in os.listdir(downloads_dir):
+                    # Skip hidden files
+                    if f.startswith('.'): continue
+                    f_path = os.path.join(downloads_dir, f)
+                    if os.path.isfile(f_path):
+                        if now - os.path.getmtime(f_path) > max_age:
+                            os.remove(f_path)
+                            logger.info(f"Cleaned up old file: {f}")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+        await asyncio.sleep(interval)
 
 # Instances of searchers
 arxiv_searcher = ArxivSearcher()
@@ -487,7 +518,8 @@ async def download_arxiv(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         Path to the downloaded PDF file.
     """
-    return await asyncio.to_thread(arxiv_searcher.download_pdf, paper_id, save_path)
+    path = await asyncio.to_thread(arxiv_searcher.download_pdf, paper_id, save_path)
+    return get_public_url(path)
 
 
 @mcp.tool()
@@ -501,7 +533,7 @@ async def download_pubmed(paper_id: str, save_path: str = "./downloads") -> str:
         str: Message indicating that direct PDF download is not supported.
     """
     try:
-        return pubmed_searcher.download_pdf(paper_id, save_path)
+        return get_public_url(pubmed_searcher.download_pdf(paper_id, save_path))
     except NotImplementedError as e:
         return str(e)
 
@@ -516,7 +548,7 @@ async def download_biorxiv(paper_id: str, save_path: str = "./downloads") -> str
     Returns:
         Path to the downloaded PDF file.
     """
-    return biorxiv_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(biorxiv_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -529,7 +561,7 @@ async def download_medrxiv(paper_id: str, save_path: str = "./downloads") -> str
     Returns:
         Path to the downloaded PDF file.
     """
-    return medrxiv_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(medrxiv_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -542,7 +574,7 @@ async def download_iacr(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         Path to the downloaded PDF file.
     """
-    return iacr_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(iacr_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -662,7 +694,7 @@ async def download_semantic(paper_id: str, save_path: str = "./downloads") -> st
     Returns:
         Path to the downloaded PDF file.
     """ 
-    return semantic_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(semantic_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -750,7 +782,7 @@ async def download_crossref(paper_id: str, save_path: str = "./downloads") -> st
         Use the DOI to access the paper through the publisher's website.
     """
     try:
-        return crossref_searcher.download_pdf(paper_id, save_path)
+        return get_public_url(crossref_searcher.download_pdf(paper_id, save_path))
     except NotImplementedError as e:
         return str(e)
 
@@ -773,7 +805,7 @@ async def download_scihub(
     fetcher = SciHubFetcher(base_url=base_url, output_dir=save_path)
     result = await asyncio.to_thread(fetcher.download_pdf, identifier)
     if result:
-        return result
+        return get_public_url(result)
     return "Sci-Hub download failed. Try DOI first, then title, or change mirror URL."
 
 
@@ -827,7 +859,7 @@ async def download_with_fallback(
         try:
             primary_result = await asyncio.to_thread(primary_downloaders[source_name], paper_id, save_path)
             if isinstance(primary_result, str) and os.path.exists(primary_result):
-                return primary_result
+                return get_public_url(primary_result)
             if isinstance(primary_result, str) and primary_result:
                 primary_error = primary_result
         except Exception as exc:
@@ -841,7 +873,7 @@ async def download_with_fallback(
 
     repository_result, repository_error = await _try_repository_fallback(doi, title, save_path)
     if repository_result:
-        return repository_result
+        return get_public_url(repository_result)
     if repository_error:
         attempt_errors.append(f"repositories: {repository_error}")
 
@@ -851,7 +883,7 @@ async def download_with_fallback(
         if unpaywall_url:
             unpaywall_result = await _download_from_url(unpaywall_url, save_path, f"unpaywall_{normalized_doi}")
             if unpaywall_result:
-                return unpaywall_result
+                return get_public_url(unpaywall_result)
             attempt_errors.append("unpaywall: resolved OA URL but download failed")
         else:
             attempt_errors.append("unpaywall: no OA URL found (or PAPER_SEARCH_MCP_UNPAYWALL_EMAIL/UNPAYWALL_EMAIL missing)")
@@ -865,7 +897,7 @@ async def download_with_fallback(
     fetcher = SciHubFetcher(base_url=scihub_base_url, output_dir=save_path)
     fallback_result = await asyncio.to_thread(fetcher.download_pdf, fallback_identifier)
     if fallback_result:
-        return fallback_result
+        return get_public_url(fallback_result)
 
     return "Download failed after OA fallback chain and Sci-Hub fallback. Details: " + " | ".join(attempt_errors)
 
@@ -1103,7 +1135,7 @@ async def download_dblp(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         str: Message indicating that direct PDF download is not supported.
     """
-    return dblp_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(dblp_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1129,7 +1161,7 @@ async def download_openaire(paper_id: str, save_path: str = "./downloads") -> st
     Returns:
         str: Path to downloaded PDF or error message.
     """
-    return openaire_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(openaire_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1155,7 +1187,7 @@ async def download_citeseerx(paper_id: str, save_path: str = "./downloads") -> s
     Returns:
         str: Path to downloaded PDF or error message.
     """
-    return citeseerx_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(citeseerx_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1181,7 +1213,7 @@ async def download_doaj(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         str: Path to downloaded PDF.
     """
-    return doaj_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(doaj_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1207,7 +1239,7 @@ async def download_base(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         str: Path to downloaded PDF.
     """
-    return base_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(base_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1233,7 +1265,7 @@ async def download_zenodo(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         str: Path to downloaded PDF.
     """
-    return zenodo_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(zenodo_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1259,7 +1291,7 @@ async def download_hal(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         str: Path to downloaded PDF.
     """
-    return hal_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(hal_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1289,7 +1321,7 @@ async def download_ssrn(paper_id: str, save_path: str = "./downloads") -> str:
     Returns:
         str: Error message from metadata-only SSRN connector.
     """
-    return ssrn_searcher.download_pdf(paper_id, save_path)
+    return get_public_url(ssrn_searcher.download_pdf(paper_id, save_path))
 
 
 @mcp.tool()
@@ -1315,7 +1347,8 @@ async def download_openalex(paper_id: str, save_path: str = "./downloads") -> st
     Returns:
         str: Error message, typically OpenAlex relies on extracted pdf_url instead of direct downloads.
     """
-    return await asyncio.to_thread(openalex_searcher.download_pdf, paper_id, save_path)
+    path = await asyncio.to_thread(openalex_searcher.download_pdf, paper_id, save_path)
+    return get_public_url(path)
 
 
 # ---------------------------------------------------------------------------
@@ -1344,7 +1377,8 @@ if ieee_searcher is not None:
         Returns:
             str: Path to saved PDF or error message.
         """
-        return await asyncio.to_thread(ieee_searcher.download_pdf, paper_id, save_path)
+        path = await asyncio.to_thread(ieee_searcher.download_pdf, paper_id, save_path)
+        return get_public_url(path)
 
     @mcp.tool()
     async def read_ieee_paper(paper_id: str, save_path: str = "./downloads") -> str:
@@ -1385,7 +1419,8 @@ if acm_searcher is not None:
         Returns:
             str: Path to saved PDF or error message.
         """
-        return await asyncio.to_thread(acm_searcher.download_pdf, paper_id, save_path)
+        path = await asyncio.to_thread(acm_searcher.download_pdf, paper_id, save_path)
+        return get_public_url(path)
 
     @mcp.tool()
     async def read_acm_paper(paper_id: str, save_path: str = "./downloads") -> str:
@@ -1407,16 +1442,28 @@ def main():
         # Map 'http' to the specific string 'streamable-http' required by FastMCP
         actual_transport = "streamable-http" if transport_name == "http" else transport_name
         
+        # Ensure downloads directory exists
+        os.makedirs("./downloads", exist_ok=True)
+
         # In this version of FastMCP, add_middleware is missing. 
-        # We must hook into the app creation to add our security layer.
-        if _mcp_api_key:
-            original_app_method = mcp.streamable_http_app
-            def patched_app_method():
-                app = original_app_method()
+        # We must hook into the app creation to add our security layer and static files.
+        original_app_method = mcp.streamable_http_app
+        def patched_app_method():
+            app = original_app_method()
+            if _mcp_api_key:
                 app.add_middleware(ApiKeyMiddleware)
-                return app
-            mcp.streamable_http_app = patched_app_method
-            logger.info("Authentication enabled (patched into Starlette app).")
+                logger.info("Authentication enabled.")
+            
+            # Mount downloads directory to serve PDFs publicly
+            app.mount("/downloads", StaticFiles(directory="./downloads"), name="downloads")
+            logger.info("Static file serving for /downloads enabled.")
+            return app
+        
+        mcp.streamable_http_app = patched_app_method
+        
+        # Start cleanup task in the background
+        asyncio.create_task(cleanup_downloads())
+        logger.info("Background cleanup task for downloads started.")
         
         logger.info(f"Starting MCP server on {mcp.settings.host}:{mcp.settings.port} with {actual_transport} transport...")
         mcp.run(transport=actual_transport)
