@@ -147,6 +147,10 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if not _mcp_api_key:
             return await call_next(request)
             
+        # Allow public access to the downloads directory
+        if request.url.path.startswith("/downloads"):
+            return await call_next(request)
+            
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             return Response("Unauthorized: Missing or invalid Authorization header", status_code=401)
